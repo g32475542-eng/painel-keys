@@ -18,10 +18,13 @@ users[SOCIO_USER] = SOCIO_PASS;
 
 const authMiddleware = basicAuth({ users, challenge: true, realm: 'Painel de Keys' });
 
-// Protege todas as rotas exceto /api/validate
+// Protege todas as rotas exceto /api/validate (GET e POST)
 app.use((req, res, next) => {
-    if (req.path === '/api/validate') next();
-    else authMiddleware(req, res, next);
+    if (req.path === '/api/validate') {
+        next();
+    } else {
+        authMiddleware(req, res, next);
+    }
 });
 
 let keys = {};
@@ -34,7 +37,20 @@ setInterval(() => {
     }
 }, 60000);
 
-// Rota pública POST para validação
+// Rota pública GET (para executores que não suportam POST)
+app.get('/api/validate', (req, res) => {
+    const key = req.query.key;
+    if (!key) return res.json({ valid: false, message: 'Key não fornecida' });
+    const data = keys[key];
+    if (!data) return res.json({ valid: false, message: 'Key inválida' });
+    if (Math.floor(Date.now() / 1000) > data.expira) {
+        delete keys[key];
+        return res.json({ valid: false, message: 'Key expirada' });
+    }
+    res.json({ valid: true, message: 'Key válida', expiration: data.expira });
+});
+
+// Rota pública POST (para compatibilidade)
 app.post('/api/validate', (req, res) => {
     const { key } = req.body;
     if (!key) return res.json({ valid: false, message: 'Key não fornecida' });
@@ -47,7 +63,7 @@ app.post('/api/validate', (req, res) => {
     res.json({ valid: true, message: 'Key válida', expiration: data.expira });
 });
 
-// Rotas administrativas
+// Rotas administrativas (protegidas)
 app.get('/api/keys', (req, res) => {
     const lista = Object.entries(keys).map(([k, v]) => ({ key: k, expira: v.expira, criada: v.criada }));
     res.json(lista);
@@ -68,7 +84,7 @@ app.delete('/api/keys/:key', (req, res) => {
     res.json({ success: true });
 });
 
-// Arquivos estáticos (painel HTML)
+// Serve o painel HTML
 app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
