@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="pt">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Painel de Keys - Expiração em tempo real</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background: #0a0a0f;
+        color: #eee;
+        font-family: "Segoe UI", system-ui, monospace;
+        padding: 20px;
+      }
+      .container {
+        max-width: 1100px;
+        margin: auto;
+      }
+      h1 {
+        text-align: center;
+        color: #6c5ce7;
+      }
+      .card {
+        background: #1e1e2a;
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      }
+      .flex {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      input,
+      button {
+        padding: 10px 16px;
+        border-radius: 8px;
+        border: none;
+        font-size: 14px;
+      }
+      input {
+        background: #2d2d3a;
+        color: white;
+        flex: 1;
+      }
+      button {
+        background: #6c5ce7;
+        color: white;
+        cursor: pointer;
+        transition: 0.2s;
+      }
+      button:hover {
+        background: #5a4bcf;
+      }
+      .delete {
+        background: #e74c3c;
+      }
+      .delete:hover {
+        background: #c0392b;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 16px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 12px;
+        border-bottom: 1px solid #2d2d3a;
+      }
+      th {
+        color: #b0b0d0;
+      }
+      .timestamp {
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .countdown {
+        font-family: monospace;
+        font-weight: bold;
+        color: #6c5ce7;
+      }
+      .expirado {
+        color: #e74c3c;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🔑 Painel de Licenças</h1>
+      <div class="card">
+        <h3>Adicionar nova key</h3>
+        <div class="flex">
+          <input
+            type="text"
+            id="keyInput"
+            placeholder="Código da key (ex: VIP123)"
+            style="flex: 2"
+          />
+          <input
+            type="number"
+            id="durationInput"
+            placeholder="Duração (segundos)"
+            style="flex: 1"
+          />
+          <button id="addBtn">➕ Adicionar</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Keys ativas <span id="keyCount"></span></h3>
+        <div style="overflow-x: auto">
+          <table id="keysTable">
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Expira em (data/hora)</th>
+                <th>Tempo restante</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="keysBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let keysData = []; // guarda as keys com seus timestamps
+      let intervalId = null;
+
+      async function carregarKeys() {
+        const res = await fetch("/api/keys");
+        keysData = await res.json();
+        atualizarTabela();
+      }
+
+      function formatarTempoRestante(expiraTimestamp) {
+        const agora = Math.floor(Date.now() / 1000);
+        let diff = expiraTimestamp - agora;
+        if (diff <= 0)
+          return { texto: "Expirada", classe: "expirado", expirada: true };
+
+        const dias = Math.floor(diff / 86400);
+        diff %= 86400;
+        const horas = Math.floor(diff / 3600);
+        diff %= 3600;
+        const minutos = Math.floor(diff / 60);
+        const segundos = diff % 60;
+
+        let texto = "";
+        if (dias > 0) texto += `${dias}d `;
+        if (horas > 0 || dias > 0) texto += `${horas}h `;
+        if (minutos > 0 || horas > 0 || dias > 0) texto += `${minutos}m `;
+        texto += `${segundos}s`;
+        return { texto, classe: "countdown", expirada: false };
+      }
+
+      function atualizarTabela() {
+        const tbody = document.getElementById("keysBody");
+        tbody.innerHTML = "";
+        let ativas = 0;
+        for (let k of keysData) {
+          const restante = formatarTempoRestante(k.expira);
+          if (!restante.expirada) ativas++;
+
+          const row = tbody.insertRow();
+          row.insertCell(0).textContent = k.key;
+
+          // Data/hora de expiração formatada
+          const dataExp = new Date(k.expira * 1000);
+          row.insertCell(1).textContent = dataExp.toLocaleString();
+
+          // Célula do tempo restante
+          const cellTempo = row.insertCell(2);
+          const spanTempo = document.createElement("span");
+          spanTempo.className = restante.classe;
+          spanTempo.textContent = restante.texto;
+          cellTempo.appendChild(spanTempo);
+
+          // Botão remover
+          const btnRemover = document.createElement("button");
+          btnRemover.textContent = "🗑️ Remover";
+          btnRemover.className = "delete";
+          btnRemover.onclick = () => removerKey(k.key);
+          const cellAcao = row.insertCell(3);
+          cellAcao.appendChild(btnRemover);
+        }
+        document.getElementById("keyCount").textContent = `(${ativas})`;
+      }
+
+      // Atualiza os contadores regressivos a cada segundo
+      function iniciarAtualizacaoContagem() {
+        if (intervalId) clearInterval(intervalId);
+        intervalId = setInterval(() => {
+          // Recarrega os dados do servidor para pegar novas expirações e keys removidas
+          carregarKeys();
+        }, 1000);
+      }
+
+      async function adicionarKey() {
+        const key = document.getElementById("keyInput").value.trim();
+        const duracao = parseInt(
+          document.getElementById("durationInput").value,
+        );
+        if (!key || !duracao) {
+          alert("Preencha key e duração em segundos");
+          return;
+        }
+        const res = await fetch("/api/keys", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key, duracaoSegundos: duracao }),
+        });
+        if (res.ok) {
+          document.getElementById("keyInput").value = "";
+          document.getElementById("durationInput").value = "";
+          carregarKeys();
+        } else {
+          alert("Erro ao adicionar");
+        }
+      }
+
+      async function removerKey(key) {
+        if (!confirm(`Remover key ${key}?`)) return;
+        await fetch(`/api/keys/${encodeURIComponent(key)}`, {
+          method: "DELETE",
+        });
+        carregarKeys();
+      }
+
+      document.getElementById("addBtn").onclick = adicionarKey;
+      carregarKeys();
+      iniciarAtualizacaoContagem();
+    </script>
+  </body>
+</html>
